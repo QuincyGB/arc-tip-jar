@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArcTipJar — Demo</title>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<style>
+  :root { --bg:#0a1628; --card:#12233d; --teal:#2dd4a8; --green:#4ade80; --text:#e8f1f8; --muted:#8ba3bd; }
+  * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--text); min-height:100vh; }
+  .wrap { max-width:640px; margin:0 auto; padding:24px 16px 48px; }
+  .hero { text-align:center; padding:32px 0 8px; }
+  .hero img { width:96px; height:96px; border-radius:24px; }
+  .hero h1 { margin:16px 0 8px; font-size:32px; }
+  .hero p { color:var(--muted); line-height:1.6; margin:0 auto; max-width:480px; }
+  .card { background:var(--card); border-radius:16px; padding:20px; margin-top:20px; border:1px solid #1e3554; }
+  .card h2 { margin:0 0 12px; font-size:18px; }
+  button { background:linear-gradient(135deg,var(--teal),var(--green)); color:#06231a; border:0; border-radius:12px; padding:14px 20px; font-size:16px; font-weight:700; width:100%; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  input, textarea { width:100%; background:#0a1628; border:1px solid #1e3554; border-radius:10px; color:var(--text); padding:12px; font-size:15px; margin-bottom:12px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
+  .stats { display:flex; gap:12px; margin-top:20px; }
+  .stat { flex:1; background:var(--card); border:1px solid #1e3554; border-radius:12px; padding:14px; text-align:center; }
+  .stat .n { font-size:24px; font-weight:800; color:var(--teal); }
+  .stat .l { font-size:12px; color:var(--muted); margin-top:4px; }
+  .tip { background:#0a1628; border:1px solid #1e3554; border-radius:10px; padding:12px; margin-bottom:10px; font-size:14px; }
+  .tip .memo { color:var(--text); margin:6px 0; font-style:italic; }
+  .tip .meta { color:var(--muted); font-size:12px; }
+  .tip a { color:var(--teal); text-decoration:none; }
+  .addr { font-family:monospace; font-size:12px; color:var(--muted); word-break:break-all; }
+  .status { text-align:center; color:var(--muted); font-size:14px; margin-top:12px; min-height:20px; }
+  .links { text-align:center; margin-top:24px; font-size:14px; }
+  .links a { color:var(--teal); margin:0 10px; text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <h1>🫙 ArcTipJar</h1>
+    <p>Tipping where <b>gas IS USDC</b>. Send native USDC to anyone on Arc with an on-chain memo — no custody, no vaults, one balance does everything.</p>
+  </div>
+
+  <div class="card">
+    <h2>Wallet</h2>
+    <button id="connectBtn">Connect Wallet</button>
+    <div class="status" id="walletStatus"></div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="n" id="statTips">–</div><div class="l">total tips</div></div>
+    <div class="stat"><div class="n" id="statVol">–</div><div class="l">USDC tipped</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Send a tip</h2>
+    <label>Recipient address</label>
+    <input id="to" placeholder="0x…">
+    <label>Amount (USDC)</label>
+    <input id="amount" type="number" step="0.01" min="0.01" value="0.01">
+    <label>Memo (stored on-chain)</label>
+    <textarea id="memo" rows="2" placeholder="great work!"></textarea>
+    <button id="tipBtn">Send Tip 🫙</button>
+    <div class="status" id="tipStatus"></div>
+  </div>
+
+  <div class="card">
+    <h2>Recent tips</h2>
+    <div id="feed"><div class="status">loading…</div></div>
+  </div>
+
+  <div class="links">
+    <a href="https://explorer.arc.io/address/0xBD437E3378eae16a082580e26157575523Ba852f" target="_blank">Contract</a>
+    <a href="https://github.com/QuincyGB/arc-tip-jar" target="_blank">GitHub</a>
+  </div>
+</div>
+
+<script>
+const CONTRACT = "0xBD437E3378eae16a082580e26157575523Ba852f";
+const ARC = { chainId: "0x13B2", chainName: "Arc Mainnet",
+  rpcUrls: ["https://rpc.mainnet.arc.io"], blockExplorerUrls: ["https://explorer.arc.io"],
+  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 } };
+const ABI = [
+  "function tip(address to, string memo) payable",
+  "function totalTips() view returns (uint256)",
+  "event Tip(address indexed from, address indexed to, uint256 amount, string memo)"
+];
+let provider, signer, contract;
+
+const $ = id => document.getElementById(id);
+const short = a => a ? a.slice(0,6)+"…"+a.slice(-4) : "";
+
+async function ensureArc() {
+  try { await window.ethereum.request({method:"wallet_switchEthereumChain", params:[{chainId:ARC.chainId}]}); }
+  catch(e) { if (e.code===4902) await window.ethereum.request({method:"wallet_addEthereumChain", params:[ARC]}); else throw e; }
+}
+
+$("connectBtn").onclick = async () => {
+  if (!window.ethereum) { $("walletStatus").textContent = "No wallet found — open this page in MetaMask's browser."; return; }
+  try {
+    await ensureArc();
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    contract = new ethers.Contract(CONTRACT, ABI, signer);
+    const addr = await signer.getAddress();
+    $("walletStatus").innerHTML = 'Connected: <span class="addr">'+addr+'</span>';
+    $("connectBtn").textContent = "Connected ✓";
+    loadStats();
+  } catch(e) { $("walletStatus").textContent = "Connection failed: " + (e.message||e); }
+};
+
+$("tipBtn").onclick = async () => {
+  if (!contract) { $("tipStatus").textContent = "Connect your wallet first."; return; }
+  const to = $("to").value.trim(), memo = $("memo").value.trim() || "tip!";
+  const amt = $("amount").value;
+  if (!ethers.isAddress(to)) { $("tipStatus").textContent = "Enter a valid recipient address."; return; }
+  try {
+    $("tipBtn").disabled = true;
+    $("tipStatus").textContent = "Sending…";
+    const tx = await contract.tip(to, memo, { value: ethers.parseEther(String(amt)) });
+    $("tipStatus").innerHTML = 'Sent! <a style="color:#2dd4a8" target="_blank" href="https://explorer.arc.io/tx/'+tx.hash+'">view tx</a>';
+    await tx.wait();
+    $("tipStatus").innerHTML = 'Confirmed ✓ <a style="color:#2dd4a8" target="_blank" href="https://explorer.arc.io/tx/'+tx.hash+'">view tx</a>';
+    loadStats(); loadFeed();
+  } catch(e) { $("tipStatus").textContent = "Failed: " + (e.reason || e.message || e); }
+  $("tipBtn").disabled = false;
+};
+
+async function loadStats() {
+  if (!contract) return;
+  try {
+    const n = await contract.totalTips();
+    $("statTips").textContent = n.toString();
+    const events = await contract.queryFilter(contract.filters.Tip(), -20000);
+    let vol = 0n; events.forEach(e => vol += e.args.amount);
+    $("statVol").textContent = ethers.formatEther(vol);
+  } catch(e) {}
+}
+
+async function loadFeed() {
+  try {
+    const p = new ethers.JsonRpcProvider(ARC.rpcUrls[0]);
+    const c = new ethers.Contract(CONTRACT, ABI, p);
+    const events = await c.queryFilter(c.filters.Tip(), -20000);
+    const feed = $("feed"); feed.innerHTML = "";
+    events.slice().reverse().slice(0,10).forEach(e => {
+      const d = document.createElement("div"); d.className = "tip";
+      d.innerHTML = '<div><b>'+short(e.args.from)+'</b> → <b>'+short(e.args.to)+'</b> · '+ethers.formatEther(e.args.amount)+' USDC</div>'
+        + '<div class="memo">"'+String(e.args.memo).replace(/</g,"&lt;")+'"</div>'
+        + '<div class="meta"><a target="_blank" href="https://explorer.arc.io/tx/'+e.transactionHash+'">view on explorer</a></div>';
+      feed.appendChild(d);
+    });
+    if (!events.length) feed.innerHTML = '<div class="status">no tips yet — send the first one!</div>';
+  } catch(e) { $("feed").innerHTML = '<div class="status">could not load feed</div>'; }
+}
+loadFeed();
+</script>
+</body>
+</html>
