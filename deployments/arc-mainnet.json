@@ -1,0 +1,9 @@
+{
+ "network": "Arc mainnet",
+ "chainId": 5042,
+ "contract": "0xBD437E3378eae16a082580e26157575523Ba852f",
+ "deployTx": "0x090d02ca7bc17965f541e91d425469c013cbf1224c0b99e097021c48ef91da72",
+ "testTipTx": "0x875b5ef21ffa8c9a6f2fba3598f8633eefe0698bf036277a5035925daf135341",
+ "explorer": "https://explorer.arc.io/address/0xBD437E3378eae16a082580e26157575523Ba852f",
+ "deployer": "0xa4f183a6799F0310FcCC545B07F2DcC960223de2"
+}
